@@ -132,6 +132,16 @@ internal sealed class MainWindowViewModel : BindableBase, IDisposable
 
         _eventAggregator.GetEvent<NavigationEvent>().Subscribe(view =>
         {
+            if (IsHistoryBackRequest(view))
+            {
+                var journal = regionManager.Regions[ContentRegion].NavigationService.Journal;
+                if (journal.CanGoBack)
+                {
+                    journal.GoBack();
+                    return;
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(view.ViewName))
             {
                 LogManager.Error(nameof(MainWindowViewModel), "Ignored navigation request with an empty view name.");
@@ -180,6 +190,12 @@ internal sealed class MainWindowViewModel : BindableBase, IDisposable
             };
             _regionManager.RequestNavigate("ContentRegion", ViewIndexViewModel.Tag, param);
         });
+    }
+
+    internal static bool IsHistoryBackRequest(NavigationParam view)
+    {
+        ArgumentNullException.ThrowIfNull(view);
+        return view.ParentViewName == null && view.Parameter == null;
     }
 
     internal static NavigationParameters CreateNavigationParameters(NavigationParam view)
