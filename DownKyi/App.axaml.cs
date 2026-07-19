@@ -128,6 +128,7 @@ internal partial class App : PrismApplication, IDisposable
         containerRegistry.RegisterForNavigation<ViewMyBangumiFollow>(ViewMyBangumiFollowViewModel.Tag);
         containerRegistry.RegisterForNavigation<ViewMyToViewVideo>(ViewMyToViewVideoViewModel.Tag);
         containerRegistry.RegisterForNavigation<ViewMyHistory>(ViewMyHistoryViewModel.Tag);
+        containerRegistry.RegisterForNavigation<ViewMyDynamic>(ViewMyDynamicViewModel.Tag);
 
         // downloadManager pages
         containerRegistry.RegisterForNavigation<ViewDownloading>(ViewDownloadingViewModel.Tag);

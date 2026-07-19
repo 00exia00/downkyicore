@@ -71,10 +71,12 @@ flowchart TD
     MainWindow["ui.main-window\nDownKyi/Views/MainWindow.axaml"]
     MainVm["viewmodel.main-window\nDownKyi/ViewModels/MainWindowViewModel.cs"]
     VideoVm["viewmodel.video-detail\nDownKyi/ViewModels/ViewVideoDetailViewModel.cs"]
+    DynamicVm["viewmodel.dynamic-feed\nDownKyi/ViewModels/ViewMyDynamicViewModel.cs"]
     Resolver["service.video-input-resolver\nDownKyi/Services/Video/VideoInputResolver.cs"]
     Parser["service.video-parse-coordinator\nDownKyi/Services/Video/VideoParseCoordinator.cs"]
     InfoServices["service.info-services\nVideo/Bangumi/Cheese services"]
     BiliApi["core.bili-api\nDownKyi.Core/BiliApi"]
+    DynamicApi["core.dynamic-feed-api\nDownKyi.Core/BiliApi/Dynamic"]
     WebClient["core.web-client\nDownKyi.Core/BiliApi/WebClient.cs"]
     LegacySettings["core.legacy-settings-migration\nLegacySettingsDecryptor.cs"]
     DownloadAdd["service.download-add\nAddToDownloadService + DownloadAddCoordinator"]
@@ -101,10 +103,12 @@ flowchart TD
     MainWindow -->|binds| MainVm
     MainVm -->|navigates| VideoVm
     VideoVm -->|calls| Resolver
+    DynamicVm -->|calls| DynamicApi
     VideoVm -->|calls| Parser
     Parser -->|calls| InfoServices
     InfoServices -->|calls| BiliApi
     BiliApi -->|calls| WebClient
+    DynamicApi -->|calls| WebClient
     App -->|reads old settings only| LegacySettings
     VideoVm -->|calls| DownloadAdd
     DownloadAdd -->|persists| Storage
@@ -420,6 +424,54 @@ tests:
   - test.web-client
   - test.json-contracts
   - test.wbi-signature
+```
+
+### viewmodel.dynamic-feed
+
+```yaml
+id: viewmodel.dynamic-feed
+type: viewmodel
+paths:
+  - DownKyi/ViewModels/ViewMyDynamicViewModel.cs
+  - DownKyi/ViewModels/PageViewModels/DynamicCard.cs
+  - DownKyi/Views/ViewMyDynamic.axaml
+responsibility: Displays the authenticated user's followed dynamic feed, preserves list state across child navigation, and routes video or external cards.
+inbound:
+  - viewmodel.my-space
+outbound:
+  - core.dynamic-feed-api
+contracts:
+  - Initial refresh resets the offset while infinite scrolling uses the API-provided opaque offset.
+  - Leaving the page cancels in-flight feed requests without discarding already loaded cards.
+  - Video cards navigate to the internal video-detail flow; non-video cards open their sanitized public address.
+hazards:
+  - Dynamic cards are polymorphic and new major types must degrade to text or a public dynamic address.
+  - Login expiry currently appears as an empty-state message because the legacy API boundary returns null for nonzero codes.
+tests:
+  - test.dynamic-feed
+```
+
+### core.dynamic-feed-api
+
+```yaml
+id: core.dynamic-feed-api
+type: core
+paths:
+  - DownKyi.Core/BiliApi/Dynamic/DynamicApi.cs
+  - DownKyi.Core/BiliApi/Dynamic/Models/DynamicFeedModels.cs
+responsibility: Reads and deserializes the authenticated t.bilibili.com followed feed with opaque-offset pagination.
+inbound:
+  - viewmodel.dynamic-feed
+outbound:
+  - core.web-client
+contracts:
+  - Uses the web dynamic feed endpoint with the shared authenticated cookie request path.
+  - Nonzero Bilibili response codes do not produce valid feed data.
+  - Archive, draw, opus, article, PGC, common, live, forward, and unavailable cards deserialize without requiring unrelated payload fields.
+hazards:
+  - Bilibili frequently adds dynamic major variants and may change nested card schemas.
+tests:
+  - test.dynamic-feed
 ```
 
 ### core.web-client

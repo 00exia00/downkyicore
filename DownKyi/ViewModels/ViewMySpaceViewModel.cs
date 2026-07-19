@@ -425,26 +425,25 @@ internal class ViewMySpaceViewModel : ViewModelBase
             return;
         }
 
-        switch (SelectedPackage)
+        var viewName = ResolvePackageViewName(SelectedPackage);
+        if (viewName != null)
         {
-            case 0:
-                NavigateToView.NavigationView(EventAggregator, ViewMyFavoritesViewModel.Tag, Tag, _mid);
-                break;
-            case 1:
-                NavigateToView.NavigationView(EventAggregator, ViewMyBangumiFollowViewModel.Tag, Tag, _mid);
-                break;
-            case 2:
-                NavigateToView.NavigationView(EventAggregator, ViewMyToViewVideoViewModel.Tag, Tag, _mid);
-                break;
-            case 3:
-                NavigateToView.NavigationView(EventAggregator, ViewMyHistoryViewModel.Tag, Tag, _mid);
-                break;
-            default:
-                break;
+            NavigateToView.NavigationView(EventAggregator, viewName, Tag, _mid);
         }
 
         SelectedPackage = -1;
     }
+
+    internal static string? ResolvePackageViewName(int selectedPackage) =>
+        selectedPackage switch
+        {
+            0 => ViewMyFavoritesViewModel.Tag,
+            1 => ViewMyBangumiFollowViewModel.Tag,
+            2 => ViewMyToViewVideoViewModel.Tag,
+            3 => ViewMyHistoryViewModel.Tag,
+            4 => ViewMyDynamicViewModel.Tag,
+            _ => null
+        };
 
     #endregion
 
@@ -505,10 +504,17 @@ internal class ViewMySpaceViewModel : ViewModelBase
             Image = NormalIcon.Instance().History,
             Title = DictionaryResource.GetString("History")
         });
+        PackageList.Add(new SpaceItem
+        {
+            IsEnabled = true,
+            Image = NormalIcon.Instance().Dynamic,
+            Title = DictionaryResource.GetString("Dynamic")
+        });
         NormalIcon.Instance().FavoriteOutline.Fill = DictionaryResource.GetColor("ColorPrimary");
         NormalIcon.Instance().Subscription.Fill = DictionaryResource.GetColor("ColorPrimary");
         NormalIcon.Instance().ToView.Fill = DictionaryResource.GetColor("ColorPrimary");
         NormalIcon.Instance().History.Fill = DictionaryResource.GetColor("ColorPrimary");
+        NormalIcon.Instance().Dynamic.Fill = DictionaryResource.GetColor("ColorPrimary");
 
         SelectedStatus = -1;
         SelectedPackage = -1;

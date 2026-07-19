@@ -2,13 +2,17 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using DownKyi.Commands;
 using DownKyi.Core.BiliApi.History;
 using DownKyi.Core.BiliApi.History.Models;
 using DownKyi.Core.BiliApi.VideoStream;
+using DownKyi.Core.Settings;
 using DownKyi.Core.Utils;
 using DownKyi.Events;
 using DownKyi.Images;
@@ -30,8 +34,12 @@ internal class ViewMyHistoryViewModel : ViewModelBase
     // 每页视频数量，暂时在此写死，以后在设置中增加选项
     private const int VideoNumberInPage = 30;
     private CancellationTokenSource? _loadCancellation;
+    private CancellationTokenSource? _autoRefreshCancellation;
     private bool _isLoadingPage;
     private bool _hasMoreHistory = true;
+    private bool _isPageActive;
+    private readonly CompositeFormat _nextRefreshFormat =
+        CompositeFormat.Parse(DictionaryResource.GetString("HistoryNextRefresh"));
 
     #region 页面属性申明
 
@@ -107,6 +115,49 @@ internal class ViewMyHistoryViewModel : ViewModelBase
         set => SetProperty(ref _noDataVisibility, value);
     }
 
+    private bool _isHistoryAutoRefreshEnabled;
+
+    public bool IsHistoryAutoRefreshEnabled
+    {
+        get => _isHistoryAutoRefreshEnabled;
+        set
+        {
+            if (!SetProperty(ref _isHistoryAutoRefreshEnabled, value))
+            {
+                return;
+            }
+
+            SettingsManager.Instance.SetHistoryAutoRefreshEnabled(value);
+            RestartAutoRefresh();
+        }
+    }
+
+    private decimal _historyAutoRefreshIntervalSeconds;
+
+    public decimal HistoryAutoRefreshIntervalSeconds
+    {
+        get => _historyAutoRefreshIntervalSeconds;
+        set
+        {
+            var normalized = NormalizeAutoRefreshInterval(value);
+            if (!SetProperty(ref _historyAutoRefreshIntervalSeconds, normalized))
+            {
+                return;
+            }
+
+            SettingsManager.Instance.SetHistoryAutoRefreshIntervalSeconds(normalized);
+            RestartAutoRefresh();
+        }
+    }
+
+    private string _nextAutoRefreshText = string.Empty;
+
+    public string NextAutoRefreshText
+    {
+        get => _nextAutoRefreshText;
+        private set => SetProperty(ref _nextAutoRefreshText, value);
+    }
+
     #endregion
 
     public ViewMyHistoryViewModel(IEventAggregator eventAggregator, IDialogService dialogService) : base(
@@ -131,6 +182,10 @@ internal class ViewMyHistoryViewModel : ViewModelBase
         DownloadManage.Fill = DictionaryResource.GetColor("ColorPrimary");
 
         Medias = new RangeObservableCollection<HistoryMedia>();
+
+        var settings = SettingsManager.Instance;
+        _isHistoryAutoRefreshEnabled = settings.IsHistoryAutoRefreshEnabled();
+        _historyAutoRefreshIntervalSeconds = settings.GetHistoryAutoRefreshIntervalSeconds();
 
         #endregion
     }
@@ -323,19 +378,81 @@ internal class ViewMyHistoryViewModel : ViewModelBase
             : $"{DictionaryResource.GetString("TipAddDownloadingFinished1")}{i}{DictionaryResource.GetString("TipAddDownloadingFinished2")}");
     }
 
-    private async Task UpdateHistoryMediaListAsync()
+    private async Task UpdateHistoryMediaListAsync(CancellationToken cancellationToken = default)
     {
         if (_loadCancellation != null)
         {
             await _loadCancellation.CancelAsync().ConfigureAwait(true);
         }
         _loadCancellation?.Dispose();
-        _loadCancellation = new CancellationTokenSource();
+        _loadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         _nextMax = 0;
         _nextViewAt = 0;
         _hasMoreHistory = true;
         await LoadHistoryPageAsync(reset: true, _loadCancellation.Token).ConfigureAwait(true);
+    }
+
+    private void RestartAutoRefresh()
+    {
+        CancelAndDispose(ref _autoRefreshCancellation);
+        NextAutoRefreshText = string.Empty;
+
+        if (!_isPageActive || !IsHistoryAutoRefreshEnabled || IsDisposed)
+        {
+            return;
+        }
+
+        var token = ReplaceCancellationSource(ref _autoRefreshCancellation);
+        RunFireAndForget(RunAutoRefreshAsync(token), nameof(RunAutoRefreshAsync));
+    }
+
+    private async Task RunAutoRefreshAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var delay = CreateAutoRefreshDelay(
+                    HistoryAutoRefreshIntervalSeconds,
+                    RandomNumberGenerator.GetInt32(-100, 101));
+                NextAutoRefreshText = string.Format(
+                    CultureInfo.CurrentCulture,
+                    _nextRefreshFormat,
+                    delay.TotalSeconds);
+
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(true);
+                cancellationToken.ThrowIfCancellationRequested();
+                await UpdateHistoryMediaListAsync(cancellationToken).ConfigureAwait(true);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    internal static decimal NormalizeAutoRefreshInterval(decimal seconds)
+    {
+        if (seconds <= 0)
+        {
+            return SettingsManager.DefaultHistoryAutoRefreshIntervalSeconds;
+        }
+
+        return Math.Max(
+            SettingsManager.MinimumHistoryAutoRefreshIntervalSeconds,
+            Math.Round(seconds, 2, MidpointRounding.AwayFromZero));
+    }
+
+    internal static TimeSpan CreateAutoRefreshDelay(decimal seconds, int jitterHundredths)
+    {
+        if (jitterHundredths is < -100 or > 100)
+        {
+            throw new ArgumentOutOfRangeException(nameof(jitterHundredths));
+        }
+
+        var normalizedSeconds = NormalizeAutoRefreshInterval(seconds);
+        var actualSeconds = normalizedSeconds + jitterHundredths / 100m;
+        return TimeSpan.FromMilliseconds((double)(actualSeconds * 1000m));
     }
 
     private async Task LoadHistoryPageAsync(bool reset, CancellationToken cancellationToken)
@@ -418,6 +535,7 @@ internal class ViewMyHistoryViewModel : ViewModelBase
     {
         ArgumentNullException.ThrowIfNull(navigationContext);
         base.OnNavigatedTo(navigationContext);
+        _isPageActive = true;
 
         ArrowBack.Fill = DictionaryResource.GetColor("ColorTextDark");
 
@@ -436,12 +554,22 @@ internal class ViewMyHistoryViewModel : ViewModelBase
                 media.IsSelected = false;
             }
 
+            RestartAutoRefresh();
             return;
         }
 
         InitView();
 
         RunFireAndForget(UpdateHistoryMediaListAsync(), nameof(UpdateHistoryMediaListAsync));
+        RestartAutoRefresh();
+    }
+
+    public override void OnNavigatedFrom(NavigationContext navigationContext)
+    {
+        _isPageActive = false;
+        CancelAndDispose(ref _autoRefreshCancellation);
+        NextAutoRefreshText = string.Empty;
+        base.OnNavigatedFrom(navigationContext);
     }
 
     private static bool IsValidBusiness(string business)
@@ -515,6 +643,7 @@ internal class ViewMyHistoryViewModel : ViewModelBase
             _loadCancellation?.Cancel();
             _loadCancellation?.Dispose();
             _loadCancellation = null;
+            CancelAndDispose(ref _autoRefreshCancellation);
         }
 
         base.Dispose(disposing);
