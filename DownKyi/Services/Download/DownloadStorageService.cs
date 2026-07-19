@@ -282,7 +282,7 @@ SELECT
     db.name, db.duration, db.video_codec_name, db.resolution, db.audio_codec,
     db.file_path, db.file_size, db.page
 FROM downloading dl
-LEFT JOIN download_base db ON db.id = dl.id
+INNER JOIN download_base db ON db.id = dl.id
 ORDER BY db.main_title COLLATE NOCASE, db.""order"" ASC";
                 using var reader = cmd.ExecuteReader();
                 while (reader.Read())

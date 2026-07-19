@@ -70,6 +70,29 @@ public sealed class DownloadStorageResumeTests : IDisposable
         Assert.Equal(42.5f, reader.GetFloat(4));
     }
 
+    [Fact]
+    public void GetDownloadingSkipsLegacyRowsWithoutDownloadBase()
+    {
+        Directory.CreateDirectory(_directory);
+        var database = Path.Combine(_directory, "legacy-orphan.db");
+
+        using (var storage = new DownloadStorageService(database))
+        {
+        }
+
+        using (var connection = new SqliteConnection($"Data Source={database}"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA foreign_keys = OFF; INSERT INTO downloading (id) VALUES ('legacy-orphan');";
+            command.ExecuteNonQuery();
+        }
+
+        using var reopenedStorage = new DownloadStorageService(database);
+
+        Assert.Empty(reopenedStorage.GetDownloading());
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();
